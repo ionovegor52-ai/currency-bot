@@ -10,7 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 # ========== ТВОЙ ТОКЕН ==========
-BOT_TOKEN = "ТВОЙ_ТОКЕН_СЮДА"  # ВСТАВЬ ТОКЕН ОТ @BotFather
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
 # API для курсов валют
 API_URL = "https://api.exchangerate-api.com/v4/latest/USD"
