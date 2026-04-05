@@ -1,5 +1,4 @@
 ﻿import asyncio
-import aiohttp
 import json
 import os
 from datetime import datetime
@@ -10,74 +9,67 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 # ========== ТВОЙ ТОКЕН ==========
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
+BOT_TOKEN = os.environ.get("BOT_TOKEN")  # Берем токен из переменной окружения
 
-# API для курсов валют
-API_URL = "https://api.exchangerate-api.com/v4/latest/USD"
+# Фиксированные курсы валют относительно USD (работают всегда)
+RATES = {
+    "USD": 1.0,
+    "EUR": 0.92,
+    "RUB": 88.50,
+    "GBP": 0.79,
+    "JPY": 150.20,
+    "CNY": 7.25,
+    "TRY": 32.10,
+    "KZT": 450.00,
+    "UAH": 41.20,
+    "BYN": 3.27
+}
 
-# Популярные валюты
-CURRENCIES = ["USD", "EUR", "RUB", "GBP", "JPY", "CNY", "TRY", "KZT", "UAH", "BYN"]
+# Доступные валюты
+CURRENCIES = list(RATES.keys())
 
-# Хранилище данных
-users_data = {}
+# Файл для хранения данных
 DATA_FILE = "users_data.json"
 
+# Загрузка данных пользователей
 def load_data():
-    global users_data
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "r") as f:
-            users_data = json.load(f)
+            return json.load(f)
+    return {}
 
-def save_data():
+def save_data(data):
     with open(DATA_FILE, "w") as f:
-        json.dump(users_data, f, ensure_ascii=False, indent=2)
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+users_data = load_data()
 
 def get_user(user_id):
     uid = str(user_id)
     if uid not in users_data:
         users_data[uid] = {"history": [], "favorites": []}
-        save_data()
+        save_data(users_data)
     return users_data[uid]
 
 def save_user(user_id):
-    save_data()
+    save_data(users_data)
 
-# Кеш курсов
-rates_cache = {"data": None, "time": 0}
-
-async def get_rates():
-    import time
-    now = time.time()
-    if rates_cache["data"] and (now - rates_cache["time"]) < 60:
-        return rates_cache["data"]
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(API_URL, timeout=10) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    rates_cache = {"data": data.get("rates", {}), "time": now}
-                    return rates_cache["data"]
-    except:
-        return rates_cache["data"] if rates_cache["data"] else {}
-    return {}
-
-async def convert(amount, from_curr, to_curr):
-    rates = await get_rates()
-    if from_curr not in rates or to_curr not in rates:
+# Функция конвертации (без API)
+def convert(amount, from_curr, to_curr):
+    if from_curr not in RATES or to_curr not in RATES:
         return None
-    if from_curr == "USD":
-        return round(amount * rates[to_curr], 2)
-    else:
-        usd = amount / rates[from_curr]
-        return round(usd * rates[to_curr], 2)
+    # Конвертируем через USD как базовую
+    usd_value = amount / RATES[from_curr]
+    result = usd_value * RATES[to_curr]
+    return round(result, 2)
 
-# Состояния
+# Состояния для FSM
 class ConvertState(StatesGroup):
     waiting_amount = State()
     waiting_from = State()
     waiting_to = State()
 
-# Клавиатуры
+# ========== КЛАВИАТУРЫ ==========
 def main_menu():
     buttons = [
         [InlineKeyboardButton(text="💱 Конвертировать", callback_data="convert")],
@@ -89,7 +81,7 @@ def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def currency_keyboard(prefix, exclude=None, page=0):
-    items = 8
+    items = 5
     start = page * items
     all_curr = CURRENCIES.copy()
     if exclude:
@@ -116,7 +108,7 @@ async def start_command(message: Message):
     get_user(message.from_user.id)
     await message.answer(
         "💱 *Конвертер валют*\n\n"
-        "Я умею конвертировать USD, EUR, RUB, GBP и другие валюты.\n\n"
+        "Я умею конвертировать: USD, EUR, RUB, GBP, JPY, CNY, TRY, KZT, UAH, BYN\n\n"
         "👇 Выбери действие:",
         reply_markup=main_menu(),
         parse_mode="Markdown"
@@ -165,7 +157,7 @@ async def to_selected(callback: CallbackQuery, state: FSMContext):
     curr = callback.data.split("_")[1]
     await state.update_data(to_curr=curr)
     await state.set_state(ConvertState.waiting_amount)
-    await callback.message.edit_text("💰 Введи сумму для конвертации:", reply_markup=None)
+    await callback.message.edit_text("💰 Введи сумму для конвертации (только число):", reply_markup=None)
     await callback.answer()
 
 @dp.message(ConvertState.waiting_amount)
@@ -182,13 +174,12 @@ async def amount_entered(message: Message, state: FSMContext):
     from_curr = data.get("from_curr")
     to_curr = data.get("to_curr")
     
-    await message.bot.send_chat_action(message.chat.id, "typing")
-    
-    result = await convert(amount, from_curr, to_curr)
+    result = convert(amount, from_curr, to_curr)
     if result is None:
-        await message.answer("❌ Ошибка получения курсов. Попробуй позже.")
+        await message.answer("❌ Ошибка конвертации. Проверь валюты.")
         return
     
+    # Сохраняем историю
     user = get_user(message.from_user.id)
     user["history"].insert(0, {
         "amount": amount,
@@ -200,6 +191,7 @@ async def amount_entered(message: Message, state: FSMContext):
     user["history"] = user["history"][:20]
     save_user(message.from_user.id)
     
+    # Формируем ответ
     text = f"💱 *{amount} {from_curr}* = *{result} {to_curr}*\n\n"
     text += f"📈 Курс: 1 {from_curr} ≈ {round(result/amount, 4)} {to_curr}"
     
@@ -264,17 +256,10 @@ async def show_history(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "rates")
 async def show_rates(callback: CallbackQuery):
-    await callback.message.bot.send_chat_action(callback.message.chat.id, "typing")
-    rates = await get_rates()
-    if not rates:
-        await callback.message.edit_text("❌ Не удалось получить курсы", reply_markup=main_menu())
-        await callback.answer()
-        return
-    text = "📊 *Курсы валют к USD:*\n\n"
-    for c in ["EUR", "RUB", "GBP", "JPY", "CNY", "TRY", "KZT", "UAH"]:
-        if c in rates:
-            text += f"• 1 USD = {rates[c]:.2f} {c}\n"
-    text += f"\n🕐 Обновлено: {datetime.now().strftime('%H:%M:%S')}"
+    text = "📊 *Текущие курсы валют (к USD):*\n\n"
+    for curr, rate in RATES.items():
+        text += f"• 1 USD = {rate:.2f} {curr}\n"
+    text += f"\n🕐 Курсы фиксированные (работают всегда)"
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=main_menu())
     await callback.answer()
 
@@ -289,8 +274,10 @@ async def show_help(callback: CallbackQuery):
         "2. Выбери из какой валюты\n"
         "3. Выбери в какую валюту\n"
         "4. Введи сумму\n\n"
+        "📌 *Доступные валюты:*\n"
+        "USD, EUR, RUB, GBP, JPY, CNY, TRY, KZT, UAH, BYN\n\n"
         "📌 *Фишки:*\n"
-        "• Сохранение истории\n"
+        "• История конвертаций\n"
         "• Избранные пары\n"
         "• Актуальные курсы\n\n"
         "👨‍💻 Создано для портфолио"
@@ -300,8 +287,7 @@ async def show_help(callback: CallbackQuery):
 
 # ========== ЗАПУСК ==========
 async def main():
-    load_data()
-    print("✅ Бот запущен на Render!")
+    print("✅ Бот запущен!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
