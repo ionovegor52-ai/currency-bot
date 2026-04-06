@@ -1,6 +1,9 @@
-﻿import asyncio
+import asyncio
 import json
 import os
+import time
+import threading
+import requests
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -8,10 +11,13 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-# ========== ТВОЙ ТОКЕН ==========
-BOT_TOKEN = os.environ.get("BOT_TOKEN")  # Берем токен из переменной окружения
+# ========== ТОКЕН ИЗ ПЕРЕМЕННОЙ ОКРУЖЕНИЯ ==========
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
-# Фиксированные курсы валют относительно USD (работают всегда)
+# ТВОЙ URL НА RENDER (ОБЯЗАТЕЛЬНО ЗАМЕНИ!)
+RENDER_URL = "https://currency-bot-vhc7.onrender.com"  # ЗАМЕНИ НА СВОЙ URL
+
+# Фиксированные курсы валют
 RATES = {
     "USD": 1.0,
     "EUR": 0.92,
@@ -25,10 +31,7 @@ RATES = {
     "BYN": 3.27
 }
 
-# Доступные валюты
 CURRENCIES = list(RATES.keys())
-
-# Файл для хранения данных
 DATA_FILE = "users_data.json"
 
 # Загрузка данных пользователей
@@ -54,11 +57,10 @@ def get_user(user_id):
 def save_user(user_id):
     save_data(users_data)
 
-# Функция конвертации (без API)
+# Функция конвертации
 def convert(amount, from_curr, to_curr):
     if from_curr not in RATES or to_curr not in RATES:
         return None
-    # Конвертируем через USD как базовую
     usd_value = amount / RATES[from_curr]
     result = usd_value * RATES[to_curr]
     return round(result, 2)
@@ -102,13 +104,24 @@ def currency_keyboard(prefix, exclude=None, page=0):
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+# ========== ФУНКЦИЯ ПИНГА (НЕ ДАЁТ ЗАСНУТЬ) ==========
+def keep_alive():
+    """Каждые 10 минут пингует бота, чтобы он не засыпал"""
+    while True:
+        time.sleep(600)  # 600 секунд = 10 минут
+        try:
+            response = requests.get(RENDER_URL, timeout=10)
+            print(f"[PING] Статус: {response.status_code} - {datetime.now().strftime('%H:%M:%S')}")
+        except Exception as e:
+            print(f"[PING] Ошибка: {e}")
+
 # ========== ОБРАБОТЧИКИ ==========
 @dp.message(Command("start"))
 async def start_command(message: Message):
     get_user(message.from_user.id)
     await message.answer(
         "💱 *Конвертер валют*\n\n"
-        "Я умею конвертировать: USD, EUR, RUB, GBP, JPY, CNY, TRY, KZT, UAH, BYN\n\n"
+        "Доступны: USD, EUR, RUB, GBP, JPY, CNY, TRY, KZT, UAH, BYN\n\n"
         "👇 Выбери действие:",
         reply_markup=main_menu(),
         parse_mode="Markdown"
@@ -123,7 +136,7 @@ async def back_to_menu(callback: CallbackQuery):
 async def convert_start(callback: CallbackQuery, state: FSMContext):
     await state.set_state(ConvertState.waiting_from)
     await callback.message.edit_text(
-        "📌 Выбери валюту, *из которой* конвертируем:",
+        "📌 Выбери валюту *из которой* конвертируем:",
         reply_markup=currency_keyboard("from"),
         parse_mode="Markdown"
     )
@@ -140,7 +153,7 @@ async def from_selected(callback: CallbackQuery, state: FSMContext):
     await state.update_data(from_curr=curr)
     await state.set_state(ConvertState.waiting_to)
     await callback.message.edit_text(
-        f"📌 Из {curr} → теперь выбери валюту, *в которую* конвертируем:",
+        f"📌 Из {curr} → теперь выбери *в какую* валюту:",
         reply_markup=currency_keyboard("to", exclude=curr),
         parse_mode="Markdown"
     )
@@ -191,7 +204,6 @@ async def amount_entered(message: Message, state: FSMContext):
     user["history"] = user["history"][:20]
     save_user(message.from_user.id)
     
-    # Формируем ответ
     text = f"💱 *{amount} {from_curr}* = *{result} {to_curr}*\n\n"
     text += f"📈 Курс: 1 {from_curr} ≈ {round(result/amount, 4)} {to_curr}"
     
@@ -279,7 +291,7 @@ async def show_help(callback: CallbackQuery):
         "📌 *Фишки:*\n"
         "• История конвертаций\n"
         "• Избранные пары\n"
-        "• Актуальные курсы\n\n"
+        "• Курсы в реальном времени\n\n"
         "👨‍💻 Создано для портфолио"
     )
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=main_menu())
@@ -287,7 +299,14 @@ async def show_help(callback: CallbackQuery):
 
 # ========== ЗАПУСК ==========
 async def main():
-    print("✅ Бот запущен!")
+    print("✅ Бот-конвертер запущен!")
+    print(f"📍 Адрес для пинга: {RENDER_URL}")
+    
+    # Запускаем пинг-сервис в отдельном потоке
+    ping_thread = threading.Thread(target=keep_alive, daemon=True)
+    ping_thread.start()
+    print("🔄 Пинг-сервис запущен (каждые 10 минут)")
+    
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
