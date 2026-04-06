@@ -1,20 +1,16 @@
 import asyncio
 import json
 import os
-import time
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-import aiohttp
+from aiohttp import web
 
 # ========== ТОКЕН ИЗ ПЕРЕМЕННОЙ ОКРУЖЕНИЯ ==========
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-
-# ТВОЙ URL НА RENDER (ОБЯЗАТЕЛЬНО ЗАМЕНИ!)
-RENDER_URL = "https://currency-bot-vhc7.onrender.com"  # ЗАМЕНИ НА СВОЙ URL
 
 # Фиксированные курсы валют
 RATES = {
@@ -103,17 +99,23 @@ def currency_keyboard(prefix, exclude=None, page=0):
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# ========== ФУНКЦИЯ ПИНГА (БЕЗ requests) ==========
-async def keep_alive():
-    """Каждые 10 минут пингует бота через aiohttp"""
-    while True:
-        await asyncio.sleep(600)  # 600 секунд = 10 минут
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(RENDER_URL, timeout=10) as resp:
-                    print(f"[PING] Статус: {resp.status} - {datetime.now().strftime('%H:%M:%S')}")
-        except Exception as e:
-            print(f"[PING] Ошибка: {e}")
+# ========== ВЕБ-СЕРВЕР ДЛЯ RENDER ==========
+async def handle_health(request):
+    """Эндпоинт для проверки здоровья бота"""
+    return web.Response(text="✅ Бот работает!", status=200)
+
+async def start_web_server():
+    """Запускает веб-сервер на порту 10000 (нужен для Render)"""
+    app = web.Application()
+    app.router.add_get('/', handle_health)
+    app.router.add_get('/health', handle_health)
+    
+    port = int(os.environ.get('PORT', 10000))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    print(f"✅ Веб-сервер запущен на порту {port}")
 
 # ========== ОБРАБОТЧИКИ ==========
 @dp.message(Command("start"))
@@ -300,12 +302,11 @@ async def show_help(callback: CallbackQuery):
 # ========== ЗАПУСК ==========
 async def main():
     print("✅ Бот-конвертер запущен!")
-    print(f"📍 Адрес для пинга: {RENDER_URL}")
     
-    # Запускаем пинг через aiohttp в фоне
-    asyncio.create_task(keep_alive())
-    print("🔄 Пинг-сервис запущен (каждые 10 минут)")
+    # Запускаем веб-сервер для Render
+    await start_web_server()
     
+    # Запускаем бота
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
