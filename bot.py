@@ -2,14 +2,13 @@ import asyncio
 import json
 import os
 import time
-import threading
-import requests
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+import aiohttp
 
 # ========== ТОКЕН ИЗ ПЕРЕМЕННОЙ ОКРУЖЕНИЯ ==========
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -104,14 +103,15 @@ def currency_keyboard(prefix, exclude=None, page=0):
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# ========== ФУНКЦИЯ ПИНГА (НЕ ДАЁТ ЗАСНУТЬ) ==========
-def keep_alive():
-    """Каждые 10 минут пингует бота, чтобы он не засыпал"""
+# ========== ФУНКЦИЯ ПИНГА (БЕЗ requests) ==========
+async def keep_alive():
+    """Каждые 10 минут пингует бота через aiohttp"""
     while True:
-        time.sleep(600)  # 600 секунд = 10 минут
+        await asyncio.sleep(600)  # 600 секунд = 10 минут
         try:
-            response = requests.get(RENDER_URL, timeout=10)
-            print(f"[PING] Статус: {response.status_code} - {datetime.now().strftime('%H:%M:%S')}")
+            async with aiohttp.ClientSession() as session:
+                async with session.get(RENDER_URL, timeout=10) as resp:
+                    print(f"[PING] Статус: {resp.status} - {datetime.now().strftime('%H:%M:%S')}")
         except Exception as e:
             print(f"[PING] Ошибка: {e}")
 
@@ -302,9 +302,8 @@ async def main():
     print("✅ Бот-конвертер запущен!")
     print(f"📍 Адрес для пинга: {RENDER_URL}")
     
-    # Запускаем пинг-сервис в отдельном потоке
-    ping_thread = threading.Thread(target=keep_alive, daemon=True)
-    ping_thread.start()
+    # Запускаем пинг через aiohttp в фоне
+    asyncio.create_task(keep_alive())
     print("🔄 Пинг-сервис запущен (каждые 10 минут)")
     
     await dp.start_polling(bot)
