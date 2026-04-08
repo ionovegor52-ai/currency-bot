@@ -8,28 +8,21 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiohttp import web
+import aiohttp
 
-# ========== ТОКЕН ИЗ ПЕРЕМЕННОЙ ОКРУЖЕНИЯ ==========
+# ========== ТОКЕН И URL ==========
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
+RENDER_URL = os.environ.get("RENDER_URL", "https://твой-бот.onrender.com")  # ЗАМЕНИ НА СВОЙ URL
 
-# Фиксированные курсы валют
+# ========== КУРСЫ ВАЛЮТ ==========
 RATES = {
-    "USD": 1.0,
-    "EUR": 0.92,
-    "RUB": 88.50,
-    "GBP": 0.79,
-    "JPY": 150.20,
-    "CNY": 7.25,
-    "TRY": 32.10,
-    "KZT": 450.00,
-    "UAH": 41.20,
-    "BYN": 3.27
+    "USD": 1.0, "EUR": 0.92, "RUB": 88.50, "GBP": 0.79,
+    "JPY": 150.20, "CNY": 7.25, "TRY": 32.10, "KZT": 450.00,
+    "UAH": 41.20, "BYN": 3.27
 }
-
 CURRENCIES = list(RATES.keys())
 DATA_FILE = "users_data.json"
 
-# Загрузка данных пользователей
 def load_data():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "r") as f:
@@ -52,7 +45,6 @@ def get_user(user_id):
 def save_user(user_id):
     save_data(users_data)
 
-# Функция конвертации
 def convert(amount, from_curr, to_curr):
     if from_curr not in RATES or to_curr not in RATES:
         return None
@@ -60,7 +52,7 @@ def convert(amount, from_curr, to_curr):
     result = usd_value * RATES[to_curr]
     return round(result, 2)
 
-# Состояния для FSM
+# ========== СОСТОЯНИЯ ==========
 class ConvertState(StatesGroup):
     waiting_amount = State()
     waiting_from = State()
@@ -87,44 +79,24 @@ def currency_keyboard(prefix, exclude=None, page=0):
     buttons = [[InlineKeyboardButton(text=c, callback_data=f"{prefix}_{c}")] for c in currencies]
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton(text="◀ Назад", callback_data=f"{prefix}_page_{page-1}"))
+        nav.append(InlineKeyboardButton(text="◀", callback_data=f"{prefix}_page_{page-1}"))
     if start + items < len(all_curr):
-        nav.append(InlineKeyboardButton(text="Вперед ▶", callback_data=f"{prefix}_page_{page+1}"))
+        nav.append(InlineKeyboardButton(text="▶", callback_data=f"{prefix}_page_{page+1}"))
     if nav:
         buttons.append(nav)
     buttons.append([InlineKeyboardButton(text="🔙 Меню", callback_data="menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# Создаём бота
+# ========== СОЗДАЁМ БОТА ==========
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
-
-# ========== ВЕБ-СЕРВЕР ДЛЯ RENDER ==========
-async def handle_health(request):
-    """Эндпоинт для проверки здоровья бота"""
-    return web.Response(text="✅ Бот работает!", status=200)
-
-async def start_web_server():
-    """Запускает веб-сервер на порту 10000 (нужен для Render)"""
-    app = web.Application()
-    app.router.add_get('/', handle_health)
-    app.router.add_get('/health', handle_health)
-    
-    port = int(os.environ.get('PORT', 10000))
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', port)
-    await site.start()
-    print(f"✅ Веб-сервер запущен на порту {port}")
 
 # ========== ОБРАБОТЧИКИ ==========
 @dp.message(Command("start"))
 async def start_command(message: Message):
     get_user(message.from_user.id)
     await message.answer(
-        "💱 *Конвертер валют*\n\n"
-        "Доступны: USD, EUR, RUB, GBP, JPY, CNY, TRY, KZT, UAH, BYN\n\n"
-        "👇 Выбери действие:",
+        "💱 *Конвертер валют*\n\nДоступны: USD, EUR, RUB, GBP, JPY, CNY, TRY, KZT, UAH, BYN\n\n👇 Выбери действие:",
         reply_markup=main_menu(),
         parse_mode="Markdown"
     )
@@ -137,11 +109,7 @@ async def back_to_menu(callback: CallbackQuery):
 @dp.callback_query(F.data == "convert")
 async def convert_start(callback: CallbackQuery, state: FSMContext):
     await state.set_state(ConvertState.waiting_from)
-    await callback.message.edit_text(
-        "📌 Выбери валюту *из которой* конвертируем:",
-        reply_markup=currency_keyboard("from"),
-        parse_mode="Markdown"
-    )
+    await callback.message.edit_text("📌 Выбери валюту *из которой*:", reply_markup=currency_keyboard("from"), parse_mode="Markdown")
     await callback.answer()
 
 @dp.callback_query(ConvertState.waiting_from, F.data.startswith("from_"))
@@ -154,11 +122,7 @@ async def from_selected(callback: CallbackQuery, state: FSMContext):
     curr = callback.data.split("_")[1]
     await state.update_data(from_curr=curr)
     await state.set_state(ConvertState.waiting_to)
-    await callback.message.edit_text(
-        f"📌 Из {curr} → теперь выбери *в какую* валюту:",
-        reply_markup=currency_keyboard("to", exclude=curr),
-        parse_mode="Markdown"
-    )
+    await callback.message.edit_text(f"📌 Из {curr} → выбери *в какую*:", reply_markup=currency_keyboard("to", exclude=curr), parse_mode="Markdown")
     await callback.answer()
 
 @dp.callback_query(ConvertState.waiting_to, F.data.startswith("to_"))
@@ -172,7 +136,7 @@ async def to_selected(callback: CallbackQuery, state: FSMContext):
     curr = callback.data.split("_")[1]
     await state.update_data(to_curr=curr)
     await state.set_state(ConvertState.waiting_amount)
-    await callback.message.edit_text("💰 Введи сумму для конвертации (только число):", reply_markup=None)
+    await callback.message.edit_text("💰 Введи сумму:", reply_markup=None)
     await callback.answer()
 
 @dp.message(ConvertState.waiting_amount)
@@ -182,39 +146,25 @@ async def amount_entered(message: Message, state: FSMContext):
         if amount <= 0:
             raise ValueError
     except:
-        await message.answer("❌ Введи корректное число, например: 100 или 50.75")
+        await message.answer("❌ Введи число, например 100")
         return
-    
     data = await state.get_data()
     from_curr = data.get("from_curr")
     to_curr = data.get("to_curr")
-    
     result = convert(amount, from_curr, to_curr)
     if result is None:
-        await message.answer("❌ Ошибка конвертации. Проверь валюты.")
+        await message.answer("❌ Ошибка конвертации")
         return
-    
-    # Сохраняем историю
     user = get_user(message.from_user.id)
-    user["history"].insert(0, {
-        "amount": amount,
-        "from": from_curr,
-        "to": to_curr,
-        "result": result,
-        "date": datetime.now().strftime("%d.%m.%Y %H:%M")
-    })
+    user["history"].insert(0, {"amount": amount, "from": from_curr, "to": to_curr, "result": result, "date": datetime.now().strftime("%d.%m.%Y %H:%M")})
     user["history"] = user["history"][:20]
     save_user(message.from_user.id)
-    
-    text = f"💱 *{amount} {from_curr}* = *{result} {to_curr}*\n\n"
-    text += f"📈 Курс: 1 {from_curr} ≈ {round(result/amount, 4)} {to_curr}"
-    
+    text = f"💱 *{amount} {from_curr}* = *{result} {to_curr}*\n\n📈 1 {from_curr} ≈ {round(result/amount, 4)} {to_curr}"
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⭐ В избранное", callback_data=f"fav_{from_curr}_{to_curr}")],
-        [InlineKeyboardButton(text="🔄 Новая конвертация", callback_data="convert")],
+        [InlineKeyboardButton(text="🔄 Новая", callback_data="convert")],
         [InlineKeyboardButton(text="🔙 Меню", callback_data="menu")]
     ])
-    
     await message.answer(text, parse_mode="Markdown", reply_markup=keyboard)
     await state.clear()
 
@@ -225,30 +175,26 @@ async def add_favorite(callback: CallbackQuery):
     if pair not in user["favorites"]:
         user["favorites"].append(pair)
         save_user(callback.from_user.id)
-        await callback.answer("⭐ Добавлено в избранное!", show_alert=True)
+        await callback.answer("⭐ Добавлено!", show_alert=True)
     else:
-        await callback.answer("Уже в избранном", show_alert=True)
+        await callback.answer("Уже есть", show_alert=True)
 
 @dp.callback_query(F.data == "favorites")
 async def show_favorites(callback: CallbackQuery):
     user = get_user(callback.from_user.id)
     favs = user.get("favorites", [])
     if not favs:
-        await callback.message.edit_text("⭐ У тебя пока нет избранных пар", reply_markup=main_menu())
+        await callback.message.edit_text("⭐ Нет избранных пар", reply_markup=main_menu())
         await callback.answer()
         return
-    buttons = []
-    for pair in favs:
-        f, t = pair.split("_")
-        buttons.append([InlineKeyboardButton(text=f"💱 {f} → {t}", callback_data=f"use_{pair}")])
+    buttons = [[InlineKeyboardButton(text=f"💱 {f}→{t}", callback_data=f"use_{f}_{t}")] for f,t in [pair.split("_") for pair in favs]]
     buttons.append([InlineKeyboardButton(text="🔙 Меню", callback_data="menu")])
     await callback.message.edit_text("⭐ *Избранное:*", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="Markdown")
     await callback.answer()
 
 @dp.callback_query(F.data.startswith("use_"))
 async def use_favorite(callback: CallbackQuery, state: FSMContext):
-    pair = callback.data.replace("use_", "")
-    f, t = pair.split("_")
+    _, f, t = callback.data.split("_")
     await state.update_data(from_curr=f, to_curr=t)
     await state.set_state(ConvertState.waiting_amount)
     await callback.message.edit_text(f"💰 {f} → {t}\nВведи сумму:")
@@ -262,7 +208,7 @@ async def show_history(callback: CallbackQuery):
         await callback.message.edit_text("📜 История пуста", reply_markup=main_menu())
         await callback.answer()
         return
-    text = "📜 *Последние конвертации:*\n\n"
+    text = "📜 *Последние 10:*\n\n"
     for i, h in enumerate(history[:10], 1):
         text += f"{i}. {h['amount']} {h['from']} → {h['result']} {h['to']}\n   _{h['date']}_\n\n"
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=main_menu())
@@ -270,43 +216,56 @@ async def show_history(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "rates")
 async def show_rates(callback: CallbackQuery):
-    text = "📊 *Текущие курсы валют (к USD):*\n\n"
+    text = "📊 *Курсы к USD:*\n\n"
     for curr, rate in RATES.items():
         text += f"• 1 USD = {rate:.2f} {curr}\n"
-    text += f"\n🕐 Курсы фиксированные (работают всегда)"
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=main_menu())
     await callback.answer()
 
 @dp.callback_query(F.data == "help")
 async def show_help(callback: CallbackQuery):
-    text = (
-        "❓ *Помощь*\n\n"
-        "📌 *Команды:*\n"
-        "/start — Главное меню\n\n"
-        "📌 *Как пользоваться:*\n"
-        "1. Нажми «Конвертировать»\n"
-        "2. Выбери из какой валюты\n"
-        "3. Выбери в какую валюту\n"
-        "4. Введи сумму\n\n"
-        "📌 *Доступные валюты:*\n"
-        "USD, EUR, RUB, GBP, JPY, CNY, TRY, KZT, UAH, BYN\n\n"
-        "📌 *Фишки:*\n"
-        "• История конвертаций\n"
-        "• Избранные пары\n"
-        "• Курсы в реальном времени\n\n"
-        "👨‍💻 Создано для портфолио"
-    )
+    text = "❓ *Помощь*\n\n/start — меню\n\n1. Нажми «Конвертировать»\n2. Выбери валюты\n3. Введи сумму\n\n⭐ Избранное — быстрый доступ\n📜 История — последние операции"
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=main_menu())
     await callback.answer()
 
+# ========== ВЕБ-СЕРВЕР ДЛЯ RENDER (обязательно) ==========
+async def health_check(request):
+    return web.Response(text="✅ Бот работает")
+
+async def self_ping():
+    """Каждые 10 минут бот пингует сам себя"""
+    while True:
+        await asyncio.sleep(600)  # 10 минут
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(RENDER_URL, timeout=10) as resp:
+                    print(f"[SELF-PING] {resp.status} - {datetime.now().strftime('%H:%M:%S')}")
+        except Exception as e:
+            print(f"[SELF-PING] Ошибка: {e}")
+
+async def start_web():
+    app = web.Application()
+    app.router.add_get('/', health_check)
+    app.router.add_get('/health', health_check)
+    port = int(os.environ.get('PORT', 10000))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    print(f"✅ Веб-сервер на порту {port}")
+
 # ========== ЗАПУСК ==========
 async def main():
-    print("✅ Бот-конвертер запущен!")
+    print("✅ Бот запущен!")
+    print(f"📍 Адрес: {RENDER_URL}")
     
-    # Запускаем веб-сервер для Render
-    await start_web_server()
+    # Запускаем веб-сервер
+    await start_web()
     
-    # Запускаем бота
+    # Запускаем самопинг
+    asyncio.create_task(self_ping())
+    print("🔄 Самопинг запущен (каждые 10 минут)")
+    
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
