@@ -12,7 +12,7 @@ import aiohttp
 
 # ========== ТОКЕН И URL ==========
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-RENDER_URL = os.environ.get("RENDER_URL", "https://твой-бот.onrender.com")  # ЗАМЕНИ НА СВОЙ URL
+RENDER_URL = "https://currency-bot-nexu.onrender.com"
 
 # ========== КУРСЫ ВАЛЮТ ==========
 RATES = {
